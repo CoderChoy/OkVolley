@@ -18,10 +18,8 @@ package com.android.volley.toolbox;
 
 import com.android.volley.Cache;
 import com.android.volley.NetworkResponse;
-
-import org.apache.http.impl.cookie.DateParseException;
-import org.apache.http.impl.cookie.DateUtils;
-import org.apache.http.protocol.HTTP;
+import com.android.volley.apachehttp.DateUtils;
+import com.android.volley.apachehttp.HTTP;
 
 import java.util.Map;
 
@@ -127,7 +125,7 @@ public class HttpHeaderParser {
         try {
             // Parse date in RFC1123 format if this header contains one
             return DateUtils.parseDate(dateStr).getTime();
-        } catch (DateParseException e) {
+        } catch (Exception e) {
             // Date in invalid format, fallback to 0
             return 0;
         }

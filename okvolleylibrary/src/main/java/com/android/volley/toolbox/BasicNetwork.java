@@ -32,17 +32,12 @@ import com.android.volley.ServerError;
 import com.android.volley.TimeoutError;
 import com.android.volley.VolleyError;
 import com.android.volley.VolleyLog;
+import com.android.volley.apachehttp.DateUtils;
+import com.android.volley.apachehttp.HttpStatus;
 
-import org.apache.http.Header;
-import org.apache.http.HttpEntity;
-import org.apache.http.HttpResponse;
-import org.apache.http.HttpStatus;
-import org.apache.http.StatusLine;
 import org.apache.http.conn.ConnectTimeoutException;
-import org.apache.http.impl.cookie.DateUtils;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.MalformedURLException;
 import java.net.SocketTimeoutException;
 import java.util.Collections;
@@ -50,6 +45,9 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.TreeMap;
+
+import okhttp3.Headers;
+import okhttp3.Response;
 
 /**
  * A network performing Volley requests over an {@link HttpStack}.
@@ -87,7 +85,7 @@ public class BasicNetwork implements Network {
     public NetworkResponse performRequest(Request<?> request) throws VolleyError {
         long requestStart = SystemClock.elapsedRealtime();
         while (true) {
-            HttpResponse httpResponse = null;
+            Response httpResponse = null;
             byte[] responseContents = null;
             Map<String, String> responseHeaders = Collections.emptyMap();
             try {
@@ -95,10 +93,9 @@ public class BasicNetwork implements Network {
                 Map<String, String> headers = new HashMap<String, String>();
                 addCacheHeaders(headers, request.getCacheEntry());
                 httpResponse = mHttpStack.performRequest(request, headers);
-                StatusLine statusLine = httpResponse.getStatusLine();
-                int statusCode = statusLine.getStatusCode();
+                int statusCode = httpResponse.code();
 
-                responseHeaders = convertHeaders(httpResponse.getAllHeaders());
+                responseHeaders = convertHeaders(httpResponse.headers());
                 // Handle cache validation.
                 if (statusCode == HttpStatus.SC_NOT_MODIFIED) {
 
@@ -120,8 +117,8 @@ public class BasicNetwork implements Network {
                 }
 
                 // Some responses such as 204s do not have content.  We must check.
-                if (httpResponse.getEntity() != null) {
-                  responseContents = entityToBytes(httpResponse.getEntity());
+                if (httpResponse.body() != null) {
+                  responseContents = httpResponse.body().bytes();
                 } else {
                   // Add 0 byte response as a way of honestly representing a
                   // no-content request.
@@ -130,7 +127,7 @@ public class BasicNetwork implements Network {
 
                 // if the request is slow, log it.
                 long requestLifetime = SystemClock.elapsedRealtime() - requestStart;
-                logSlowRequests(requestLifetime, request, responseContents, statusLine);
+                logSlowRequests(requestLifetime, request, responseContents, statusCode);
 
                 if (statusCode < 200 || statusCode > 299) {
                     throw new IOException();
@@ -146,7 +143,7 @@ public class BasicNetwork implements Network {
             } catch (IOException e) {
                 int statusCode;
                 if (httpResponse != null) {
-                    statusCode = httpResponse.getStatusLine().getStatusCode();
+                    statusCode = httpResponse.code();
                 } else {
                     throw new NoConnectionError(e);
                 }
@@ -184,12 +181,12 @@ public class BasicNetwork implements Network {
      * Logs requests that took over SLOW_REQUEST_THRESHOLD_MS to complete.
      */
     private void logSlowRequests(long requestLifetime, Request<?> request,
-            byte[] responseContents, StatusLine statusLine) {
+            byte[] responseContents, int statusCode) {
         if (DEBUG || requestLifetime > SLOW_REQUEST_THRESHOLD_MS) {
             VolleyLog.d("HTTP response for request=<%s> [lifetime=%d], [size=%s], " +
                     "[rc=%d], [retryCount=%s]", request, requestLifetime,
                     responseContents != null ? responseContents.length : "null",
-                    statusLine.getStatusCode(), request.getRetryPolicy().getCurrentRetryCount());
+                    statusCode, request.getRetryPolicy().getCurrentRetryCount());
         }
     }
 
@@ -200,6 +197,11 @@ public class BasicNetwork implements Network {
      */
     private static void attemptRetryOnException(String logPrefix, Request<?> request,
             VolleyError exception) throws VolleyError {
+        //When request is canceled, stop retrying (add by CoderChoy)
+        if (request.isCanceled()) {
+            throw exception;
+        }
+        //(add by CoderChoy end)
         RetryPolicy retryPolicy = request.getRetryPolicy();
         int oldTimeout = request.getTimeoutMs();
 
@@ -234,43 +236,14 @@ public class BasicNetwork implements Network {
         VolleyLog.v("HTTP ERROR(%s) %d ms to fetch %s", what, (now - start), url);
     }
 
-    /** Reads the contents of HttpEntity into a byte[]. */
-    private byte[] entityToBytes(HttpEntity entity) throws IOException, ServerError {
-        PoolingByteArrayOutputStream bytes =
-                new PoolingByteArrayOutputStream(mPool, (int) entity.getContentLength());
-        byte[] buffer = null;
-        try {
-            InputStream in = entity.getContent();
-            if (in == null) {
-                throw new ServerError();
-            }
-            buffer = mPool.getBuf(1024);
-            int count;
-            while ((count = in.read(buffer)) != -1) {
-                bytes.write(buffer, 0, count);
-            }
-            return bytes.toByteArray();
-        } finally {
-            try {
-                // Close the InputStream and release the resources by "consuming the content".
-                entity.consumeContent();
-            } catch (IOException e) {
-                // This can happen if there was an exception above that left the entity in
-                // an invalid state.
-                VolleyLog.v("Error occured when calling consumingContent");
-            }
-            mPool.returnBuf(buffer);
-            bytes.close();
-        }
-    }
-
     /**
      * Converts Headers[] to Map<String, String>.
+     * @param headers
      */
-    protected static Map<String, String> convertHeaders(Header[] headers) {
+    protected static Map<String, String> convertHeaders(Headers headers) {
         Map<String, String> result = new TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER);
-        for (int i = 0; i < headers.length; i++) {
-            result.put(headers[i].getName(), headers[i].getValue());
+        for (int i = 0; i < headers.size(); i++) {
+            result.put(headers.name(i), headers.value(i));
         }
         return result;
     }

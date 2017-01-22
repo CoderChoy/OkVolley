@@ -19,7 +19,6 @@ package com.android.volley.toolbox;
 import android.content.Context;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager.NameNotFoundException;
-import android.net.http.AndroidHttpClient;
 import android.os.Build;
 
 import com.android.volley.Network;
@@ -52,11 +51,9 @@ public class Volley {
 
         if (stack == null) {
             if (Build.VERSION.SDK_INT >= 9) {
-                stack = new HurlStack();
+                stack = new OkHttpStack();
             } else {
-                // Prior to Gingerbread, HttpUrlConnection was unreliable.
-                // See: http://android-developers.blogspot.com/2011/09/androids-http-clients.html
-                stack = new HttpClientStack(AndroidHttpClient.newInstance(userAgent));
+                throw new RuntimeException("Only supports Android 2.3 and above.");
             }
         }
 
